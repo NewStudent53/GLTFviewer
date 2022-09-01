@@ -51606,9 +51606,6 @@ var Viewer = /*#__PURE__*/function () {
       return new Promise(function (resolve, reject) {
         // Intercept and override relative URLs.
         MANAGER.setURLModifier(function (url, path) {
-          // URIs in a glTF file may be escaped, or not. Assume that assetMap is
-          // from an un-escaped source, and decode all URIs before lookups.
-          // See: https://github.com/donmccurdy/three-gltf-viewer/issues/146
           var normalizedURL = rootPath + decodeURI(url).replace(baseURL, '').replace(/^(\.?\/)/, '');
 
           if (assetMap.has(normalizedURL)) {
