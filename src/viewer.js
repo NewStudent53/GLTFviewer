@@ -1,5 +1,3 @@
-//Recordar
-
 import {
   AmbientLight,
   AnimationMixer,
@@ -28,12 +26,13 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
-//import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 import { GUI } from 'dat.gui';
 
 import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
+import { SpotLight } from 'three';
 
 const DEFAULT_CAMERA = '[default]';
 
@@ -61,8 +60,10 @@ export class Viewer {
     this.gui = null;
 
     this.state = {
-      environment: options.preset === Preset.ASSET_GENERATOR,
-      background: true,
+      environment: options.preset === Preset.ASSET_GENERATOR
+        ? environments.find((e) => e.id === 'footprint-court').name
+        : environments[1].name,
+      background: false,
       playbackSpeed: 1.0,
       actionStates: {},
       camera: DEFAULT_CAMERA,
@@ -70,15 +71,27 @@ export class Viewer {
       skeleton: false,
       grid: false,
 
+      // Lights
       addLights: true,
       exposure: 1.0,
       textureEncoding: 'sRGB',
       ambientIntensity: 0.3,
       ambientColor: 0xFFFFFF,
-      directIntensity: 0.8 * Math.PI, // TODO(#116)
+      directIntensity: 0.8 * Math.PI,
       directColor: 0xFFFFFF,
       bgColor1: '#ffffff',
-      bgColor2: '#353535'
+      bgColor2: '#353535',
+      AmbientLight: false,
+      DirectionLight: false,
+      SpotLight: false,
+      HemisphereLight: false,
+      skycolor: 0xffffbb,
+      groundcolor: 0x080820,
+      hemintensity: 1,
+      color: 0xFFFFFF,
+      intensity: 1,
+      distance: 1,
+      angle: Math.PI /3
     };
 
     this.prevTime = 0;
@@ -98,12 +111,15 @@ export class Viewer {
 
     this.renderer = window.renderer = new WebGLRenderer({antialias: true});
     this.renderer.physicallyCorrectLights = true;
+    this.renderer.outputEncoding = sRGBEncoding;
     this.renderer.setClearColor( 0xcccccc );
     this.renderer.setPixelRatio( window.devicePixelRatio );
     this.renderer.setSize( el.clientWidth, el.clientHeight );
 
     this.pmremGenerator = new PMREMGenerator( this.renderer );
     this.pmremGenerator.compileEquirectangularShader();
+
+    this.neutralEnvironment = this.pmremGenerator.fromScene( new RoomEnvironment() ).texture;
 
     this.controls = new OrbitControls( this.defaultCamera, this.renderer.domElement );
     this.controls.autoRotate = false;
@@ -112,7 +128,7 @@ export class Viewer {
 
     this.vignette = createBackground({
       aspect: this.defaultCamera.aspect,
-      grainScale: IS_IOS ? 0 : 0.001, // mattdesl/three-vignette-background#1
+      grainScale: IS_IOS ? 0 : 0.001, 
       colors: [this.state.bgColor1, this.state.bgColor2]
     });
     this.vignette.name = 'Vignette';
@@ -182,10 +198,11 @@ export class Viewer {
 
     const baseURL = LoaderUtils.extractUrlBase(url);
 
+    // Load.
     return new Promise((resolve, reject) => {
 
+      // Intercept and override relative URLs.
       MANAGER.setURLModifier((url, path) => {
-
         const normalizedURL = rootPath + decodeURI(url)
           .replace(baseURL, '')
           .replace(/^(\.?\/)/, '');
@@ -286,10 +303,18 @@ export class Viewer {
     this.content = object;
 
     this.state.addLights = true;
+    this.state.AmbientLight = false;
+    this.state.DirectionLight = false;
+    this.state.HemisphereLight = false;
+    this.state.SpotLight = false;
 
     this.content.traverse((node) => {
       if (node.isLight) {
         this.state.addLights = false;
+        this.state.AmbientLight = false;
+        this.state.DirectionLight = false;
+        this.state.HemisphereLight = false;
+        this.state.SpotLight = false;
       } else if (node.isMesh) {
         node.material.depthWrite = !node.material.transparent;
       }
@@ -368,25 +393,131 @@ export class Viewer {
     });
   }
 
+
   updateLights () {
     const state = this.state;
     const lights = this.lights;
 
-    if (state.addLights && !lights.length) {
+    if (state.SpotLight && !lights.length) {
       this.addLights();
-    } else if (!state.addLights && lights.length) {
+    } else if (!state.SpotLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.HemisphereLight && !lights.length) {
+      this.addLights();
+    } else if (!state.HemisphereLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.DirectionLight && !lights.length) {
+      this.addLights();
+    } else if (!state.DirectionLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.AmbientLight && !lights.length) {
+      this.addLights();
+    } else if (!state.AmbientLight && lights.length) {
       this.removeLights();
     }
 
     this.renderer.toneMappingExposure = state.exposure;
-
-    if (lights.length === 2) {
-      lights[0].intensity = state.ambientIntensity;
-      lights[0].color.setHex(state.ambientColor);
-      lights[1].intensity = state.directIntensity;
-      lights[1].color.setHex(state.directColor);
-    }
   }
+
+  updateLights2 () {
+    const state = this.state;
+    const lights = this.lights;
+
+    if (state.SpotLight && !lights.length) {
+      this.addLights();
+    } else if (!state.SpotLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.HemisphereLight && !lights.length) {
+      this.addLights();
+    } else if (!state.HemisphereLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.AmbientLight && !lights.length) {
+      this.addLights();
+    } else if (!state.AmbientLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.DirectionLight && !lights.length) {
+      this.addLights();
+    } else if (!state.DirectionLight && lights.length) {
+      this.removeLights();
+    }
+
+    this.renderer.toneMappingExposure = state.exposure;
+  }
+
+  updateLights3 () {
+    const state = this.state;
+    const lights = this.lights;
+
+    if (state.HemisphereLight && !lights.length) {
+      this.addLights();
+    } else if (!state.HemisphereLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.AmbientLight && !lights.length) {
+      this.addLights();
+    } else if (!state.AmbientLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.DirectionLight && !lights.length) {
+      this.addLights();
+    } else if (!state.DirectionLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.SpotLight && !lights.length) {
+      this.addLights();
+    } else if (!state.SpotLight && lights.length) {
+      this.removeLights();
+    }
+
+    this.renderer.toneMappingExposure = state.exposure;
+  }
+
+  updateLights4 () {
+    const state = this.state;
+    const lights = this.lights;
+
+    if (state.AmbientLight && !lights.length) {
+      this.addLights();
+    } else if (!state.AmbientLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.DirectionLight && !lights.length) {
+      this.addLights();
+    } else if (!state.DirectionLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.SpotLight && !lights.length) {
+      this.addLights();
+    } else if (!state.SpotLight && lights.length) {
+      this.removeLights();
+    }
+
+    if (state.HemisphereLight && !lights.length) {
+      this.addLights();
+    } else if (!state.HemisphereLight && lights.length) {
+      this.removeLights();
+    }
+
+    this.renderer.toneMappingExposure = state.exposure;
+  }
+
 
   addLights () {
     const state = this.state;
@@ -408,7 +539,17 @@ export class Viewer {
     light2.name = 'main_light';
     this.defaultCamera.add( light2 );
 
-    this.lights.push(light1, light2);
+    const light3 = new HemisphereLight(state.skycolor, state.groundcolor, state.hemintensity);
+    light3.position.set(0.5, 0, 0.866);
+    light3.name = 'hemi_light';
+    this.defaultCamera.add(light3);
+
+    const light4 = new SpotLight(state.color, state.intensity, state.distance, state.angle);
+    light4.position.set(10,100,10);
+    light4.name = 'point_light';
+    this.defaultCamera.add(light4);
+
+    this.lights.push(light1, light2, light3, light4);
   }
 
   removeLights () {
@@ -440,7 +581,12 @@ export class Viewer {
   getCubeMapTexture ( environment ) {
     const { id, path } = environment;
 
-    // none
+    if ( id === 'neutral' ) {
+
+      return Promise.resolve( { envMap: this.neutralEnvironment } );
+
+    }
+
     if ( id === '' ) {
 
       return Promise.resolve( { envMap: null } );
@@ -529,6 +675,7 @@ export class Viewer {
 
     const gui = this.gui = new GUI({autoPlace: false, width: 260, hideable: true});
 
+    // Display controls.
     const dispFolder = gui.addFolder('Display');
     const envBackgroundCtrl = dispFolder.add(this.state, 'background');
     envBackgroundCtrl.onChange(() => this.updateEnvironment());
@@ -545,31 +692,53 @@ export class Viewer {
     bgColor1Ctrl.onChange(() => this.updateBackground());
     bgColor2Ctrl.onChange(() => this.updateBackground());
 
-    const lightFolder = gui.addFolder('Lighting');
+    // Settings
+    const lightFolder = gui.addFolder('Settings');
     const envMapCtrl = lightFolder.add(this.state, 'environment', environments.map((env) => env.name));
     envMapCtrl.onChange(() => this.updateEnvironment());
     [
       lightFolder.add(this.state, 'exposure', 0, 2),
-      lightFolder.add(this.state, 'addLights').listen(),
-      //lightFolder.add(this.state, 'ambientIntensity', 0, 2),
-      //lightFolder.addColor(this.state, 'ambientColor'),
-      //lightFolder.add(this.state, 'directIntensity', 0, 4), // TODO(#116)
-      //lightFolder.addColor(this.state, 'directColor')
+      lightFolder.add(this.state, 'AmbientLight').listen(),
+      lightFolder.add(this.state, 'DirectionLight').listen(),
+      lightFolder.add(this.state, 'SpotLight').listen(),
+      lightFolder.add(this.state, 'HemisphereLight').listen()
     ].forEach((ctrl) => ctrl.onChange(() => this.updateLights()));
+    lightFolder.open()
 
-    const AmbientFolder = gui.addFolder('AmbientLight');
+    
+    // Ambient Lights
+    const ambientFolder = gui.addFolder('THREE.AmbientLight');
     [
-      AmbientFolder.add(this.state, 'ambientIntensity', 0, 2),
-      AmbientFolder.addColor(this.state, 'ambientColor')
+      ambientFolder.add(this.state, 'ambientIntensity', 0, 50),
+      ambientFolder.addColor(this.state, 'ambientColor')
     ].forEach((ctrl) => ctrl.onChange(() => this.updateLights()));
 
-    //const PointLightFolder = gui.addFolder('PointLight');
-    //[
-    //  PointLightFolder.add(this.state, 'distance', 0, 100, 0.01),
-    //  PointLightFolder.add(this.state, 'decay', 0, 4, 0.1)
-    //].forEach((ctrl) => ctrl.onChange(() => this.updateLights()));
+    // Direction Lights
+    const directionFolder = gui.addFolder('THREE.DirectionLight');
+    [
+      directionFolder.add(this.state, 'directIntensity', 0, 4), 
+      directionFolder.addColor(this.state, 'directColor')
+    ].forEach((ctrl) => ctrl.onChange(() => this.updateLights2()));
 
 
+    // Point Lights
+    const PointFolder = gui.addFolder('THREE.SpotLight');
+    [
+      PointFolder.addColor(this.state, 'color'),
+      PointFolder.add(this.state, 'intensity', 0, 40),
+      PointFolder.add(this.state, 'distance', -50, 50),
+      PointFolder.add(this.state, 'angle', -30, 30)
+    ].forEach((ctrl) => ctrl.onChange(() => this.updateLights3()));
+
+    // Hemisphere Lights
+    const HemisphereFolder = gui.addFolder('THREE.HemisphereLight');
+    [
+      HemisphereFolder.addColor(this.state, 'skycolor'),
+      HemisphereFolder.addColor(this.state, 'groundcolor'),
+      HemisphereFolder.add(this.state, 'hemintensity', 0, 100)
+    ].forEach((ctrl) => ctrl.onChange(() => this.updateLights4()));
+
+    // Animation controls.
     this.animFolder = gui.addFolder('Animation');
     this.animFolder.domElement.style.display = 'none';
     const playbackSpeedCtrl = this.animFolder.add(this.state, 'playbackSpeed', 0, 1);
@@ -578,12 +747,15 @@ export class Viewer {
     });
     this.animFolder.add({playAll: () => this.playAllClips()}, 'playAll');
 
+    // Morph target controls.
     this.morphFolder = gui.addFolder('Morph Targets');
     this.morphFolder.domElement.style.display = 'none';
 
+    // Camera controls.
     this.cameraFolder = gui.addFolder('Cameras');
     this.cameraFolder.domElement.style.display = 'none';
 
+    // Stats.
     const perfFolder = gui.addFolder('Performance');
     const perfLi = document.createElement('li');
     this.stats.dom.style.position = 'static';
@@ -653,6 +825,7 @@ export class Viewer {
       this.clips.forEach((clip, clipIndex) => {
         clip.name = `${clipIndex + 1}. ${clip.name}`;
 
+        // Autoplay the first clip.
         let action;
         if (clipIndex === 0) {
           actionStates[clip.name] = true;
@@ -662,6 +835,7 @@ export class Viewer {
           actionStates[clip.name] = false;
         }
 
+        // Play other clips when enabled.
         const ctrl = this.animFolder.add(actionStates, clip.name).listen();
         ctrl.onChange((playAnimation) => {
           action = action || this.mixer.clipAction(clip);
@@ -679,6 +853,7 @@ export class Viewer {
 
     this.scene.remove( this.content );
 
+    // dispose geometry
     this.content.traverse((node) => {
 
       if ( !node.isMesh ) return;
@@ -687,6 +862,7 @@ export class Viewer {
 
     } );
 
+    // dispose textures
     traverseMaterials( this.content, (material) => {
 
       for ( const key in material ) {
@@ -715,6 +891,7 @@ function traverseMaterials (object, callback) {
   });
 }
 
+// https://stackoverflow.com/a/9039885/1314762
 function isIOS() {
   return [
     'iPad Simulator',
